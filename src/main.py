@@ -23,12 +23,15 @@ class SimplifiedRig():
 class VarianceVis(ShowBase):
 
     def __init__(self, data_path, use_openxr=False):
-        ShowBase.__init__(self)
 
         if use_openxr:
             from p3dopenxr.p3dopenxr import P3DOpenXR
-            from panda3d.core import LPoint3
+        else:
+            from davis import DaVis
 
+        ShowBase.__init__(self)
+
+        if use_openxr:
             # Create VR backend
             self.openxr = P3DOpenXR()
             self.openxr.init()
@@ -49,19 +52,17 @@ class VarianceVis(ShowBase):
             self.openxr.action_set.add_callback("/user/hand/right/input/thumbstick", self.on_right_analog)
 
         else:
-            from davis import DaVis
-
             # Create VR backend
-            self.davis = DaVis(self)
+            self.davis = DaVis()
 
             # Setup rig
             self.rig = SimplifiedRig(
                 rig_origin = self.davis.rig,
                 head_node = self.davis.head,
-                left_hand_node = self.davis.left_hand,
-                right_hand_node = self.davis.right_hand,
-                left_aim_node=self.davis.left_hand,
-                right_aim_node=self.davis.right_hand)
+                left_hand_node = self.davis.flystick8,
+                right_hand_node = self.davis.flystick9,
+                left_aim_node=self.davis.flystick8,
+                right_aim_node=self.davis.flystick9)
             
             # TODO: Create input handlers
             self.davis.add_input_callback("left_trigger", self.on_left_trigger)
@@ -82,8 +83,8 @@ class VarianceVis(ShowBase):
         self.create_slices()
 
         # Create pointers
-        self.left_pointer = self.create_pointer(self.rig.left_aim_node, use_openxr)
-        # self.right_pointer = self.create_pointer(self.rig.right_hand_node)
+        # self.left_pointer = self.create_pointer(self.rig.left_aim_node, use_openxr)
+        self.right_pointer = self.create_pointer(self.rig.right_aim_node, use_openxr)
 
         # Create GUI
         self.create_gui()
@@ -297,6 +298,8 @@ class VarianceVis(ShowBase):
             beam.setScale(radius, length, radius)
         else:
             beam.setScale(radius, radius, -length)
+            
+        # beam.setScale(0.02, 0.02, 0.02)
         
         beam.setTwoSided(True)
 

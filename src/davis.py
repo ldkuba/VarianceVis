@@ -4,8 +4,8 @@ from direct.task import Task
 
 # loadPrcFileData("", "fullscreen 1")
 loadPrcFileData("", "win-size 1920 1080")
-# loadPrcFileData("", "framebuffer-stereo 1")
-loadPrcFileData("", "side-by-side-stereo 1")
+loadPrcFileData("", "framebuffer-stereo 1")
+# loadPrcFileData("", "side-by-side-stereo 1")
 
 class DaVis():
 
@@ -16,7 +16,7 @@ class DaVis():
     TRIGGER_LEFT_ID = 0
     TRIGGER_RIGHT_ID = 8
     TRANSFORMATION_SPEED = 2
-    NEAR_PLANE = 0.1
+    NEAR_PLANE = Z_CALIBRATION_METERS
     FAR_PLANE = 1000
 
     def __init__(self):
@@ -204,6 +204,20 @@ class DaVis():
         taskMgr.add(self.update_projection_matrix, "update_projection_matrix")
 
     def update_projection_matrix(self, t):
+        
+        head_pos = self.head.getPos()
+        print("Head pos:", head_pos)
+        
+        left_lens = PerspectiveLens()
+        left_lens.setNear(DaVis.Z_CALIBRATION_METERS - head_pos.getY())
+        left_lens.setFar(DaVis.FAR_PLANE)
+
+        right_lens = PerspectiveLens()
+        right_lens.setNear(DaVis.Z_CALIBRATION_METERS - head_pos.getY())
+        right_lens.setFar(DaVis.FAR_PLANE)
+
+        #self.left_cam.node().setLens(left_lens)
+        #self.right_cam.node().setLens(right_lens)
 
         ul_l = self.left.getRelativePoint(self.rig, self.screen_ul)
         ur_l = self.left.getRelativePoint(self.rig, self.screen_ur)
