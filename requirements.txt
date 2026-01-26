@@ -1,0 +1,7 @@
+argparse
+glfw
+numpy
+panda3d
+pyopengl
+pyopenxr
+./external/panda3d-openxr

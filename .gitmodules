@@ -1,0 +1,3 @@
+[submodule "external/panda3d-openxr"]
+	path = external/panda3d-openxr
+	url = https://github.com/ldkuba/panda3d-openxr.git
