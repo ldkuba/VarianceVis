@@ -1,0 +1,4 @@
+.panda3d-vis-venv/
+.vscode/
+**/__pycache__/
+*.pyc
