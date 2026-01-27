@@ -75,6 +75,8 @@ class VarianceVis(ShowBase):
             # Create VR backend
             self.davis = DaVis()
 
+            self.initial_zoom_level = 5.0
+
             # Setup rig
             self.rig = SimplifiedRig(
                 rig_origin = self.davis.rig,
@@ -90,6 +92,18 @@ class VarianceVis(ShowBase):
             self.davis.add_input_callback("left_analog", self.on_left_analog)
             self.davis.add_input_callback("right_analog", self.on_right_analog)
 
+        # Clear color
+        base.win.setClearColorActive(True)
+        base.win.setClearColor(VBase4(0.0, 0.0, 0.0, 1.0))
+
+        # Create pointers
+        self.left_pointer = self.create_pointer(self.rig._left_aim_node, use_openxr)
+        self.pointer_collision_node = self.left_pointer.attachNewNode(CollisionNode('left_pointer_collision_node'))
+        self.pointer_collision_node.node().add_solid(CollisionRay())
+        self.pointer_collision_mask = BitMask32.bit(1)
+        self.pointer_collision_node.node().setFromCollideMask(self.pointer_collision_mask)
+        self.pointer_collision_handler = CollisionHandlerQueue()
+
         # Initialize slice data format
         self.init_slice_data()
 
@@ -102,12 +116,9 @@ class VarianceVis(ShowBase):
         # Create slice geometry
         self.create_slices()
 
-        # Create pointers
-        self.left_pointer = self.create_pointer(self.rig._left_aim_node, use_openxr)
-        # self.right_pointer = self.create_pointer(self.rig._right_aim_node, use_openxr)
-
         # Create GUI
-        self.create_gui()
+        # self.create_gui()
+        self.create_3D_gui()
 
         # Update loop for continous updates
         self.transformation_started = False
@@ -132,7 +143,6 @@ class VarianceVis(ShowBase):
             current_pos = self.rig.get_right_hand_pose()[0]
             delta = current_pos - self.hand_transformation_anchor
 
-            # if delta.getY() > delta.getX() and delta.getY() > delta.getZ():
             new_pos = self.vis_transformation_anchor + Vec3(0.0, delta.getY() * self.vis_scale * self.zoom_speed, 0.0)
             self.vis_node.setPos(new_pos)
 
@@ -214,6 +224,8 @@ class VarianceVis(ShowBase):
         slice_node = GeomNode(name)
         slice_node.addGeom(slice_geom)
 
+        slice_node.setIntoCollideMask(self.pointer_collision_mask)
+
         return slice_node
 
     def create_slices(self):
@@ -284,7 +296,124 @@ class VarianceVis(ShowBase):
             z_slice_np.setShaderInput("grid_res", int(self.grid_res[2]))
             z_slice_np.setShaderInput("axis", 2)
 
-    def create_gui(self):
+    def hit_test_framesize(self, widget, gui_x, gui_y):
+        center = widget.getPos()
+        width = widget.getWidth() * widget.getScale()[0]
+        height = widget.getHeight() * widget.getScale()[2]
+
+        # print(f"Widget center: {center}, size: ({width}, {height}), test point: ({gui_x}, {gui_y})")
+
+        return (center[0] - width / 2.0 <= gui_x <= center[0] + width / 2.0) and \
+               (center[2] - height / 2.0 <= gui_y <= center[2] + height / 2.0)
+
+    class Widget3D():
+        def __init__(self, name, root_node, texture, buffer, card):
+            self.name = name
+            self.root_node = root_node
+            self.texture = texture
+            self.buffer = buffer
+            self.card = card
+
+    def create_3d_widget(self, name):
+        # Create render texture
+        ui_tex_size = (1024, 1024)
+        ui_tex = Texture()
+        ui_tex.setup_2d_texture(
+            ui_tex_size[0], ui_tex_size[1], Texture.T_unsigned_byte, Texture.F_rgba8)
+        
+        fb_props = FrameBufferProperties()
+        fb_props.set_rgba_bits(8, 8, 8, 8)
+        fb_props.set_depth_bits(1)
+
+        win_props = WindowProperties.size(*ui_tex_size)
+
+        ui_buffer = self.graphicsEngine.make_output(
+            self.pipe, name, -2,
+            fb_props, win_props,
+            GraphicsPipe.BF_refuse_window,
+            self.win.get_gsg(), self.win
+        )
+
+        ui_buffer.add_render_texture(
+            ui_tex,
+            GraphicsOutput.RTMBindOrCopy,
+            GraphicsOutput.RTPColor
+        )
+
+        # Create scene
+        ui_root = NodePath(name)
+        ui_cam_np = self.makeCamera(ui_buffer)
+        ui_cam_np.reparent_to(ui_root)
+        # ui_cam_np.node().set_scene(ui_root)
+
+        ui_root.set_depth_test(True)
+        ui_root.set_depth_write(True)
+        ui_root.set_two_sided(True)
+
+        lens = OrthographicLens()
+        lens.set_film_size(2, 2)         # DirectGUI uses -1..1 space by default
+        lens.set_near_far(-100, 100)
+        ui_cam_np.node().set_lens(lens)
+
+        ui_buffer.set_clear_color((0, 0, 0, 0))
+        ui_buffer.set_clear_depth(1.0)
+        ui_buffer.set_clear_color_active(True)
+        ui_buffer.set_clear_depth_active(True)
+        ui_buffer.get_display_region(0).set_camera(ui_cam_np)
+
+        ui_card = self.creat_3D_quad(name, ui_tex)
+
+        return self.Widget3D(name, ui_root, ui_tex, ui_buffer, ui_card)
+
+    def creat_3D_quad(self, name, texture):
+        cm = CardMaker(name + "_card")
+        cm.set_frame(-0.5, 0.5, -0.5, 0.5)
+        ui_card = self.render.attach_new_node(cm.generate())
+        ui_card.set_texture(texture, 1)
+        ui_card.set_transparency(True)
+        ui_card.set_light_off(1)
+        return ui_card
+
+    def create_3D_gui(self):
+        self.slice_selection_widget = self.create_3d_widget("slice_selection_widget")
+        self.slice_selection_widget.card.set_pos(3.0, 4.0, 0.0)
+        self.slice_selection_widget.card.set_scale(2.0, 1.0, 2.0)
+        quat = LQuaternionf()
+        quat.setFromAxisAngle(-30.0, Vec3(0.0, 0.0, 1.0))
+        self.slice_selection_widget.card.set_quat(quat)
+
+        self.slice_selection_widget.card.node().setIntoCollideMask(self.pointer_collision_mask)
+
+        self.all_buttons = []
+
+        ui_frame = DirectFrame(
+            parent=self.slice_selection_widget.root_node,
+            frameColor=(0.1, 0.1, 0.1, 0.5),
+            frameSize=(-0.9, 0.9, -0.9, 0.9),
+            sortOrder=-1
+        )
+        ui_frame.set_depth_write(False)
+
+        # === Slice visibility toggles ===
+        def select_slice(status, name):
+            slice_node = self.render.find("**/" + name)
+            if not slice_node.isEmpty():
+                if status:
+                    slice_node.show()
+                else:
+                    slice_node.hide()
+
+        index = 0
+        selection_buttons = []
+        for (name, vertices, colors) in self.scene_objects:
+            selection_buttons.append(DirectCheckButton(sortOrder=1, text = name + "_slice_x", pos=(0.0, 1.0, -0.5 - index * 0.2), scale=.1, parent=ui_frame, command=select_slice, extraArgs=[name + "_slice_x"]))
+            selection_buttons.append(DirectCheckButton(sortOrder=1, text = name + "_slice_y", pos=(0.0, 1.0, 0.0 - index * 0.2), scale=.1, parent=ui_frame, command=select_slice, extraArgs=[name + "_slice_y"]))
+            selection_buttons.append(DirectCheckButton(sortOrder=1, text = name + "_slice_z", pos=(0.0, 1.0, 0.5 - index * 0.2), scale=.1, parent=ui_frame, command=select_slice, extraArgs=[name + "_slice_z"]))
+            index += 1
+
+        self.all_buttons.extend(selection_buttons)
+
+    def create_gui(self):    
         # === Slice slider ===
         def update_slice():
             slice_node = self.render.find("**/" + self.geom_selection[0])
@@ -303,7 +432,7 @@ class VarianceVis(ShowBase):
             elif "_slice_z" in self.geom_selection[0]:
                 slice_node.setZ(slice_float * self.grid_spacing[2])
 
-        self.slice_slider = DirectSlider(pos = (0.0, 0.0, 0.2), scale=0.8, parent=self.a2dpBottomCenter, command=update_slice, range=(0, self.grid_res[0]-1), value=0, pageSize=1)
+        self.slice_slider = DirectSlider(geom=self.slice_selection_gui_node, pos = (0.0, 0.0, 0.2), scale=0.8, parent=self.a2dpBottomCenter, command=update_slice, range=(0, self.grid_res[0]-1), value=0, pageSize=1)
 
         # === Slice visibility toggles ===
         def select_slice(status, name):
@@ -317,9 +446,9 @@ class VarianceVis(ShowBase):
         index = 0
         selection_buttons = []
         for (name, vertices, colors) in self.scene_objects:
-            selection_buttons.append(DirectCheckButton(text = name + "_slice_x", pos=(-0.5, 1.0, -0.2 - index * 0.2), scale=.05, parent=self.a2dpTopRight, command=select_slice, extraArgs=[name + "_slice_x"]))
-            selection_buttons.append(DirectCheckButton(text = name + "_slice_y", pos=(-0.5, 1.0, -0.25 - index * 0.2), scale=.05, parent=self.a2dpTopRight, command=select_slice, extraArgs=[name + "_slice_y"]))
-            selection_buttons.append(DirectCheckButton(text = name + "_slice_z", pos=(-0.5, 1.0, -0.3 - index * 0.2), scale=.05, parent=self.a2dpTopRight, command=select_slice, extraArgs=[name + "_slice_z"]))
+            selection_buttons.append(DirectCheckButton(geom=self.slice_selection_gui_node, text = name + "_slice_x", pos=(-0.5, 1.0, -0.2 - index * 0.2), scale=.05, parent=self.a2dpTopRight, command=select_slice, extraArgs=[name + "_slice_x"]))
+            selection_buttons.append(DirectCheckButton(geom=self.slice_selection_gui_node, text = name + "_slice_y", pos=(-0.5, 1.0, -0.25 - index * 0.2), scale=.05, parent=self.a2dpTopRight, command=select_slice, extraArgs=[name + "_slice_y"]))
+            selection_buttons.append(DirectCheckButton(geom=self.slice_selection_gui_node, text = name + "_slice_z", pos=(-0.5, 1.0, -0.3 - index * 0.2), scale=.05, parent=self.a2dpTopRight, command=select_slice, extraArgs=[name + "_slice_z"]))
             index += 1
 
         # === Active slice radio buttons ===
@@ -335,7 +464,7 @@ class VarianceVis(ShowBase):
         for (name, vertices, colors) in self.scene_objects:
             name_x = name + "_slice_x"
             parent_x = selection_buttons[index * 3]
-            button_x = DirectRadioButton(pos=(0.0, 0.0, 0.0), scale=1.0, parent=parent_x, command=set_active_slice, variable=self.geom_selection, value=[name_x])
+            button_x = DirectRadioButton(geom=self.slice_selection_gui_node, pos=(0.0, 0.0, 0.0), scale=1.0, parent=parent_x, command=set_active_slice, variable=self.geom_selection, value=[name_x])
             
             offset_horizontal = parent_x.getWidth() * 0.5 + button_x.getWidth() * 0.85
             offset_vertical = button_x.getHeight() * 0.25
@@ -344,10 +473,10 @@ class VarianceVis(ShowBase):
             
             name_y = name + "_slice_y"
             parent_y = selection_buttons[index * 3 + 1]
-            active_buttons.append(DirectRadioButton(pos=(-offset_horizontal, 0.0, offset_vertical), scale=1.0, parent=parent_y, command=set_active_slice, variable=self.geom_selection, value=[name_y]))
+            active_buttons.append(DirectRadioButton(geom=self.slice_selection_gui_node, pos=(-offset_horizontal, 0.0, offset_vertical), scale=1.0, parent=parent_y, command=set_active_slice, variable=self.geom_selection, value=[name_y]))
             name_z = name + "_slice_z"
             parent_z = selection_buttons[index * 3 + 2]
-            active_buttons.append(DirectRadioButton(pos=(-offset_horizontal, 0.0, offset_vertical), scale=1.0, parent=parent_z, command=set_active_slice, variable=self.geom_selection, value=[name_z]))
+            active_buttons.append(DirectRadioButton(geom=self.slice_selection_gui_node, pos=(-offset_horizontal, 0.0, offset_vertical), scale=1.0, parent=parent_z, command=set_active_slice, variable=self.geom_selection, value=[name_z]))
             index += 1
 
         for button in active_buttons:
@@ -356,7 +485,75 @@ class VarianceVis(ShowBase):
 
     def on_left_trigger(self, active: bool, changed: bool):
         if changed:
-            print(f"Left trigger active: {active}")
+            if active:
+                print(f"Left trigger pressed")
+
+                # Perform raycast
+                ray = CollisionRay()
+                # ray.setOrigin(self.rig.get_left_aim_pose()[0])
+                # ray.setDirection(self.rig.get_left_aim_pose()[1].getForward())
+                ray.setOrigin(0.0, 0.0, 0.0)
+                ray.setDirection(0.0, 1.0, 0.0)
+                self.pointer_collision_node.node().setSolid(0, ray)
+
+                pointer_traverser = CollisionTraverser()
+                pointer_traverser.addCollider(self.pointer_collision_node, self.pointer_collision_handler)
+                pointer_traverser.traverse(self.render)
+                pointer_traverser.showCollisions(render)
+
+                print("Num entries:", self.pointer_collision_handler.getNumEntries())
+
+                if self.pointer_collision_handler.getNumEntries() == 0:
+                    return
+                
+                self.pointer_collision_handler.sort_entries()
+
+                found_entry = None
+                for entry in self.pointer_collision_handler.getEntries():
+                    hit_node_path = entry.getIntoNodePath()
+                    if hit_node_path.isHidden():
+                        continue
+                    found_entry = entry
+                    break
+
+                if found_entry is None:
+                    return
+
+                print(f"Hit: {found_entry.getIntoNodePath().getName()}")
+
+                if "slice_selection_widget_card" in found_entry.getIntoNodePath().getName():
+                    # Handle UI
+                    hit_pos = found_entry.getSurfacePoint(self.slice_selection_widget.card)
+                    
+                     # Convert local hit point -> UV on card frame (-0.5..0.5 => 0..1)
+                    u = hit_pos.get_x() + 0.5
+                    v = hit_pos.get_z() + 0.5  # because card is in XZ plane by default
+
+                    if 0.0 <= u <= 1.0 and 0.0 <= v <= 1.0:
+                        # Convert UV -> DirectGUI mouse coords (-1..1)
+                        gui_x = (u * 2.0) - 1.0
+                        gui_y = (v * 2.0) - 1.0
+
+                        print(f"GUI coords: {gui_x}, {gui_y}")
+
+                        for button in self.all_buttons:
+                            print(f"Button: {button['text']}, center: {button.getPos()}, size: ({button.getWidth()}, {button.getHeight()}), scale: {button.getScale()}")
+
+                            if self.hit_test_framesize(button, gui_x, gui_y):
+                                print(f"Clicked button: {button['text']}")
+                                button["indicatorValue"] = not button["indicatorValue"]
+                                button.setIndicatorValue()
+                                cmd = button["command"]
+                                if cmd:
+                                    extra = button["extraArgs"]
+                                    if extra is None:
+                                        extra = []
+                                    cmd(button["indicatorValue"], *extra)
+
+                else:
+                    # Handle slices
+                    pass
+
 
     def on_right_trigger(self, active: bool, changed: bool):
         if changed:
