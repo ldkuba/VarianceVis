@@ -118,6 +118,34 @@ class VarianceVis(ShowBase):
         # self.create_gui()
         self.create_3D_gui()
 
+        # Load reconstructed model
+        reconstructed_model_path = os.path.join("..", os.path.join(os.path.dirname(data_path), "reconstructed.obj"))
+        self.reconstructed_model = loader.loadModel(reconstructed_model_path)
+        self.reconstructed_model.setName("reconstructed_model")
+        self.reconstructed_model.reparentTo(self.vis_node)
+
+        max_size = res[0]
+        grid_size = res[0] * h[0]
+        model_scale = grid_size / max_size
+        self.reconstructed_model.setScale(model_scale)
+        self.reconstructed_model.setPos(-grid_size / 2.0, grid_size / 2.0, -grid_size / 2.0 + h[2] * 30.0)
+        quat = LQuaternionf()
+        quat.setFromAxisAngle(-90.0, Vec3(0.0, 0.0, 1.0))
+        self.reconstructed_model.setQuat(quat)
+        self.reconstructed_model.hide()
+        self.reconstructed_model.setColor(0.6, 0.6, 0.6, 1.0)
+
+        alight = AmbientLight('alight')
+        alight.setColor((0.2, 0.2, 0.2, 1))
+        alnp = render.attachNewNode(alight)
+        render.setLight(alnp)
+
+        dlight = DirectionalLight('dlight')
+        dlight.setColor((0.8, 0.8, 0.5, 1))
+        dlnp = render.attachNewNode(dlight)
+        dlnp.setHpr(0, 60, 0)
+        render.setLight(dlnp)
+
         # Update loop for continous updates
         self.transformation_started = False
         self.hand_transformation_anchor = Vec3()
@@ -258,6 +286,7 @@ class VarianceVis(ShowBase):
             x_slice_node = self.create_slice_geometry(name + "_slice_x", vertices[x_slice_flat_indices], colors, size)
             x_slice_np = self.render.attachNewNode(x_slice_node)
             x_slice_np.setTwoSided(True)
+            x_slice_np.set_light_off(1)
             x_slice_np.reparentTo(slices_node)
             x_slice_np.hide()
 
@@ -273,6 +302,7 @@ class VarianceVis(ShowBase):
             y_slice_node = self.create_slice_geometry(name + "_slice_y", vertices[y_slice_flat_indices], colors, size)
             y_slice_np = self.render.attachNewNode(y_slice_node)
             y_slice_np.setTwoSided(True)
+            y_slice_np.set_light_off(1)
             y_slice_np.reparentTo(slices_node)
             y_slice_np.hide()
 
@@ -288,6 +318,7 @@ class VarianceVis(ShowBase):
             z_slice_node = self.create_slice_geometry(name + "_slice_z", vertices[z_slice_flat_indices], colors, size)
             z_slice_np = self.render.attachNewNode(z_slice_node)
             z_slice_np.setTwoSided(True)
+            z_slice_np.set_light_off(1)
             z_slice_np.reparentTo(slices_node)
             z_slice_np.hide()
 
@@ -443,6 +474,21 @@ class VarianceVis(ShowBase):
         for button in active_buttons:
             button.setOthers(active_buttons)
             button.uncheck()
+
+        # Create toggle for reconstructed model
+        def toggle_reconstruction(status):
+            model_node = self.render.find("**/reconstructed_model")
+            if model_node.isEmpty():
+                return
+
+            if status:
+                model_node.show()
+            else:
+                model_node.hide()
+
+        model_button = DirectCheckButton(text="reconstruction", pos=(0.0, 1.0, 0.8), scale=0.1, parent=ui_frame, command=toggle_reconstruction)
+        
+        self.all_buttons.append(model_button)
 
     def create_gui(self):    
         # === Slice slider ===
