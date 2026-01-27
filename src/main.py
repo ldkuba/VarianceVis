@@ -49,7 +49,7 @@ class VarianceVis(ShowBase):
         ShowBase.__init__(self)
 
         self.vis_scale = 1.0
-        self.initial_zoom_level = 1.5
+        self.initial_zoom_level = 5.0
 
         if use_openxr:
             # Create VR backend
@@ -74,8 +74,6 @@ class VarianceVis(ShowBase):
         else:
             # Create VR backend
             self.davis = DaVis()
-
-            self.initial_zoom_level = 5.0
 
             # Setup rig
             self.rig = SimplifiedRig(
@@ -130,6 +128,9 @@ class VarianceVis(ShowBase):
         self.rotation_speed = 200.0  # degrees per meter of hand movement
         self.zoom_speed = 3.0
         
+        self.slice_offset = 0.0
+        self.slice_speed = 1.0
+
         self.last_update_time = 0.0
         taskMgr.add(self.update_task, "update_task")
 
@@ -406,12 +407,42 @@ class VarianceVis(ShowBase):
         index = 0
         selection_buttons = []
         for (name, vertices, colors) in self.scene_objects:
-            selection_buttons.append(DirectCheckButton(sortOrder=1, text = name + "_slice_x", pos=(0.0, 1.0, -0.5 - index * 0.2), scale=.1, parent=ui_frame, command=select_slice, extraArgs=[name + "_slice_x"]))
+            selection_buttons.append(DirectCheckButton(sortOrder=1, text = name + "_slice_x", pos=(0.0, 1.0, 0.5 - index * 0.2), scale=.1, parent=ui_frame, command=select_slice, extraArgs=[name + "_slice_x"]))
             selection_buttons.append(DirectCheckButton(sortOrder=1, text = name + "_slice_y", pos=(0.0, 1.0, 0.0 - index * 0.2), scale=.1, parent=ui_frame, command=select_slice, extraArgs=[name + "_slice_y"]))
-            selection_buttons.append(DirectCheckButton(sortOrder=1, text = name + "_slice_z", pos=(0.0, 1.0, 0.5 - index * 0.2), scale=.1, parent=ui_frame, command=select_slice, extraArgs=[name + "_slice_z"]))
+            selection_buttons.append(DirectCheckButton(sortOrder=1, text = name + "_slice_z", pos=(0.0, 1.0, -0.5 - index * 0.2), scale=.1, parent=ui_frame, command=select_slice, extraArgs=[name + "_slice_z"]))
             index += 1
 
         self.all_buttons.extend(selection_buttons)
+
+        # === Active slice radio buttons ===
+        # Update the slice slider
+        def set_active_slice():
+            pass
+
+        # Add button
+        active_buttons = []
+        self.geom_selection = [""]
+
+        index = 0
+        for (name, vertices, colors) in self.scene_objects:
+            name_x = name + "_slice_x"
+            button_x = DirectRadioButton(pos=(0.0, 1.0, 0.53 - index * 0.2), scale=.1, parent=ui_frame, command=set_active_slice, variable=self.geom_selection, value=[name_x])
+
+            offset_horizontal = button_x.getWidth() * 0.65
+            button_x.setX(-offset_horizontal)
+            active_buttons.append(button_x)
+            
+            name_y = name + "_slice_y"
+            active_buttons.append(DirectRadioButton(pos=(-offset_horizontal, 1.0, 0.03 - index * 0.2), scale=0.1, parent=ui_frame, command=set_active_slice, variable=self.geom_selection, value=[name_y]))
+            name_z = name + "_slice_z"
+            active_buttons.append(DirectRadioButton(pos=(-offset_horizontal, 1.0, -0.47 - index * 0.2), scale=0.1, parent=ui_frame, command=set_active_slice, variable=self.geom_selection, value=[name_z]))
+            index += 1
+
+        self.all_buttons.extend(active_buttons)
+
+        for button in active_buttons:
+            button.setOthers(active_buttons)
+            button.uncheck()
 
     def create_gui(self):    
         # === Slice slider ===
@@ -541,15 +572,26 @@ class VarianceVis(ShowBase):
 
                             if self.hit_test_framesize(button, gui_x, gui_y):
                                 print(f"Clicked button: {button['text']}")
-                                button["indicatorValue"] = not button["indicatorValue"]
-                                button.setIndicatorValue()
-                                cmd = button["command"]
-                                if cmd:
-                                    extra = button["extraArgs"]
-                                    if extra is None:
-                                        extra = []
-                                    cmd(button["indicatorValue"], *extra)
 
+                                if isinstance(button, DirectCheckButton):
+                                    button["indicatorValue"] = not button["indicatorValue"]
+                                    button.setIndicatorValue()
+                                    cmd = button["command"]
+                                    if cmd:
+                                        extra = button["extraArgs"]
+                                        if extra is None:
+                                            extra = []
+                                        cmd(button["indicatorValue"], *extra)
+                                elif isinstance(button, DirectRadioButton):
+                                    button["indicatorValue"] = not button["indicatorValue"]
+                                    button.setIndicatorValue()
+
+                                    self.geom_selection = button["value"]
+
+                                    for other in button["others"]:
+                                        if other != button:
+                                            other["indicatorValue"] = False
+                                            other.setIndicatorValue()
                 else:
                     # Handle slices
                     pass
@@ -570,9 +612,28 @@ class VarianceVis(ShowBase):
                 self.hand_orientation_anchor = LQuaternion()
                 self.vis_transformation_anchor = LQuaternion()
 
+    def update_slice(self):
+        slice_node = self.render.find("**/" + self.geom_selection[0])
+        if slice_node.isEmpty():
+            return
+
+        # Update shader uniform
+        slice_node.setShaderInput("slice_offset", self.slice_offset)
+
+        # Move geometry
+        if "_slice_x" in self.geom_selection[0]:
+            slice_node.setX(self.slice_offset * self.grid_spacing[0])
+        elif "_slice_y" in self.geom_selection[0]:
+            slice_node.setY(self.slice_offset * self.grid_spacing[1])
+        elif "_slice_z" in self.geom_selection[0]:
+            slice_node.setZ(self.slice_offset * self.grid_spacing[2])
+
     def on_left_analog(self, x, y):
-        if abs(x) > 0.1 or abs(y) > 0.1:
-            print(f"Left analog value: {x}, {y}")
+        if abs(x) > 1e-4:
+            delta = x * self.slice_speed
+            self.slice_offset += delta
+            self.slice_offset = np.clip(self.slice_offset, 0.0, self.grid_res[0] - 1)
+            self.update_slice()
 
     def on_right_analog(self, x, y):
         if abs(x) > 0.1 or abs(y) > 0.1:
