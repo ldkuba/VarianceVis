@@ -13,23 +13,43 @@ from utils import ravel_to_grid
 
 class SimplifiedRig():
     def __init__(self, rig_origin, head_node, left_hand_node, right_hand_node, left_aim_node, right_aim_node):
-        self.rig_origin = rig_origin
-        self.head_node = head_node
-        self.left_hand_node = left_hand_node
-        self.right_hand_node = right_hand_node
-        self.left_aim_node = left_aim_node
-        self.right_aim_node = right_aim_node
+        self._rig_origin = rig_origin
+        self._head_node = head_node
+        self._left_hand_node = left_hand_node
+        self._right_hand_node = right_hand_node
+        self._left_aim_node = left_aim_node
+        self._right_aim_node = right_aim_node
+
+    def get_rig_pose(self):
+        return self._rig_origin.getPos(), self._rig_origin.getQuat()
+
+    def get_head_pose(self):
+        return self._head_node.getPos(), self._head_node.getQuat()
+    
+    def get_left_hand_pose(self):
+        return self._left_hand_node.getPos(), self._left_hand_node.getQuat()
+    
+    def get_right_hand_pose(self):
+        return self._right_hand_node.getPos(), self._right_hand_node.getQuat()
+    
+    def get_left_aim_pose(self):
+        return self._left_aim_node.getPos(), self._left_aim_node.getQuat()
+    
+    def get_right_aim_pose(self):
+        return self._right_aim_node.getPos(), self._right_aim_node.getQuat()
 
 class VarianceVis(ShowBase):
 
     def __init__(self, data_path, use_openxr=False):
-
         if use_openxr:
             from p3dopenxr.p3dopenxr import P3DOpenXR
         else:
             from davis import DaVis
 
         ShowBase.__init__(self)
+
+        self.vis_scale = 1.0
+        self.initial_zoom_level = 1.5
 
         if use_openxr:
             # Create VR backend
@@ -83,11 +103,70 @@ class VarianceVis(ShowBase):
         self.create_slices()
 
         # Create pointers
-        # self.left_pointer = self.create_pointer(self.rig.left_aim_node, use_openxr)
-        self.right_pointer = self.create_pointer(self.rig.right_aim_node, use_openxr)
+        self.left_pointer = self.create_pointer(self.rig._left_aim_node, use_openxr)
+        # self.right_pointer = self.create_pointer(self.rig._right_aim_node, use_openxr)
 
         # Create GUI
         self.create_gui()
+
+        # Update loop for continous updates
+        self.transformation_started = False
+        self.hand_transformation_anchor = Vec3()
+        self.vis_transformation_anchor = Vec3()
+        self.hand_orientation_anchor = LQuaternion()
+        self.vis_orientation_anchor = LQuaternion()
+
+        self.rotation_speed = 200.0  # degrees per meter of hand movement
+        self.zoom_speed = 3.0
+        
+        self.last_update_time = 0.0
+        taskMgr.add(self.update_task, "update_task")
+
+    def update_task(self, task):
+        # print(f"Head pos: {self.rig.head_node.getPos() * 100.0}")
+
+        delta_time = task.time - self.last_update_time
+        self.last_update_time = task.time
+
+        if self.transformation_started:
+            current_pos = self.rig.get_right_hand_pose()[0]
+            delta = current_pos - self.hand_transformation_anchor
+
+            # if delta.getY() > delta.getX() and delta.getY() > delta.getZ():
+            new_pos = self.vis_transformation_anchor + Vec3(0.0, delta.getY() * self.vis_scale * self.zoom_speed, 0.0)
+            self.vis_node.setPos(new_pos)
+
+            # Rotations
+            new_orientation = LQuaternion(self.vis_orientation_anchor)
+
+            print(f"Delta movement: {delta}")
+
+            # Yaw/Pitch
+            if delta.getX() != 0.0 or delta.getZ() != 0.0:
+                rot_axis = Vec3(delta.getZ(), 0.0, -delta.getX())
+                rot_strength = rot_axis.length()
+                rot_axis.normalize()
+
+                delta_rotation = LQuaternion()
+                delta_rotation.setFromAxisAngle(rot_strength * self.rotation_speed, rot_axis)
+
+                new_orientation *= delta_rotation
+
+            # Measure roll
+            delta_orientation = LQuaternion()
+            delta_orientation = self.rig.get_right_hand_pose()[1] * self.hand_orientation_anchor.conjugate()
+            right_xformed = delta_orientation.getRight()
+            roll_angle = np.arctan2(right_xformed.getZ(), right_xformed.getX())  # roll around Y axis
+            # print(f"Roll angle: {np.degrees(roll_angle)}")
+
+            if roll_angle != 0.0:
+                roll_rotation = LQuaternion()
+                roll_rotation.setFromAxisAngle(-np.degrees(roll_angle), Vec3(0.0, 1.0, 0.0))
+                new_orientation *= roll_rotation
+
+            self.vis_node.setQuat(new_orientation)
+
+        return Task.cont
 
     def init_slice_data(self):
         array = GeomVertexArrayFormat()
@@ -138,12 +217,14 @@ class VarianceVis(ShowBase):
         return slice_node
 
     def create_slices(self):
-        scale = 30.0
+        self.vis_node = self.render.attachNewNode("visualization_root")
+        self.vis_node.setScale(self.vis_scale, self.vis_scale, self.vis_scale)
+
+        self.vis_node.setPos(0.0, self.initial_zoom_level, 0.0)
+
         for (name, vertices, colors) in self.scene_objects:
             # Master node
-            master_node = self.render.attachNewNode(name)
-            master_node.setScale(scale, scale, scale)
-            master_node.reparentTo(self.render)
+            slices_node = self.vis_node.attachNewNode(name)
 
             # Create uniform buffer with color data
             colors = colors.reshape(*list(self.grid_res), 3).transpose(0, 2, 1, 3).reshape(-1, 3)
@@ -164,7 +245,7 @@ class VarianceVis(ShowBase):
             x_slice_node = self.create_slice_geometry(name + "_slice_x", vertices[x_slice_flat_indices], colors, size)
             x_slice_np = self.render.attachNewNode(x_slice_node)
             x_slice_np.setTwoSided(True)
-            x_slice_np.reparentTo(master_node)
+            x_slice_np.reparentTo(slices_node)
             x_slice_np.hide()
 
             x_slice_np.setShader(self.slice_shader)
@@ -179,7 +260,7 @@ class VarianceVis(ShowBase):
             y_slice_node = self.create_slice_geometry(name + "_slice_y", vertices[y_slice_flat_indices], colors, size)
             y_slice_np = self.render.attachNewNode(y_slice_node)
             y_slice_np.setTwoSided(True)
-            y_slice_np.reparentTo(master_node)
+            y_slice_np.reparentTo(slices_node)
             y_slice_np.hide()
 
             y_slice_np.setShader(self.slice_shader)
@@ -194,7 +275,7 @@ class VarianceVis(ShowBase):
             z_slice_node = self.create_slice_geometry(name + "_slice_z", vertices[z_slice_flat_indices], colors, size)
             z_slice_np = self.render.attachNewNode(z_slice_node)
             z_slice_np.setTwoSided(True)
-            z_slice_np.reparentTo(master_node)
+            z_slice_np.reparentTo(slices_node)
             z_slice_np.hide()
 
             z_slice_np.setShader(self.slice_shader)
@@ -280,6 +361,17 @@ class VarianceVis(ShowBase):
     def on_right_trigger(self, active: bool, changed: bool):
         if changed:
             print(f"Right trigger active: {active}")
+            self.transformation_started = active
+            if active:
+                self.hand_transformation_anchor = self.rig.get_right_hand_pose()[0]
+                self.vis_transformation_anchor = self.vis_node.getPos()
+                self.hand_orientation_anchor = self.rig.get_right_hand_pose()[1]
+                self.vis_orientation_anchor = self.vis_node.getQuat()
+            else:
+                self.hand_transformation_anchor = Vec3()
+                self.vis_transformation_anchor = Vec3()
+                self.hand_orientation_anchor = LQuaternion()
+                self.vis_transformation_anchor = LQuaternion()
 
     def on_left_analog(self, x, y):
         if abs(x) > 0.1 or abs(y) > 0.1:
