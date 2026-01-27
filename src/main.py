@@ -41,6 +41,9 @@ class SimplifiedRig():
 class VarianceVis(ShowBase):
 
     def __init__(self, data_path, use_openxr=False):
+
+        # Imports here based on flag, since they both modify panda3d config file.
+        # TODO: Find a better way to handle config file, independent of imports
         if use_openxr:
             from p3dopenxr.p3dopenxr import P3DOpenXR
         else:
@@ -94,7 +97,7 @@ class VarianceVis(ShowBase):
         base.win.setClearColorActive(True)
         base.win.setClearColor(VBase4(0.0, 0.0, 0.0, 1.0))
 
-        # Create pointers
+        # Create pointer and ray casting setup
         self.left_pointer = self.create_pointer(self.rig._left_aim_node, use_openxr)
         self.pointer_collision_node = self.left_pointer.attachNewNode(CollisionNode('left_pointer_collision_node'))
         self.pointer_collision_node.node().add_solid(CollisionRay())
@@ -124,10 +127,12 @@ class VarianceVis(ShowBase):
         self.reconstructed_model.setName("reconstructed_model")
         self.reconstructed_model.reparentTo(self.vis_node)
 
+        # Scale and position reconstructed model
         max_size = res[0]
         grid_size = res[0] * h[0]
         model_scale = grid_size / max_size
         self.reconstructed_model.setScale(model_scale)
+        # TODO: Figure out why the model is offset like this in z axis
         self.reconstructed_model.setPos(-grid_size / 2.0, grid_size / 2.0, -grid_size / 2.0 + h[2] * 30.0)
         quat = LQuaternionf()
         quat.setFromAxisAngle(-90.0, Vec3(0.0, 0.0, 1.0))
@@ -146,7 +151,7 @@ class VarianceVis(ShowBase):
         dlnp.setHpr(0, 60, 0)
         render.setLight(dlnp)
 
-        # Update loop for continous updates
+        # Navigationa and interaction variables
         self.transformation_started = False
         self.hand_transformation_anchor = Vec3()
         self.vis_transformation_anchor = Vec3()
@@ -162,9 +167,8 @@ class VarianceVis(ShowBase):
         self.last_update_time = 0.0
         taskMgr.add(self.update_task, "update_task")
 
+    """ Update task for handling navigation and interaction """
     def update_task(self, task):
-        # print(f"Head pos: {self.rig.head_node.getPos() * 100.0}")
-
         delta_time = task.time - self.last_update_time
         self.last_update_time = task.time
 
@@ -177,8 +181,6 @@ class VarianceVis(ShowBase):
 
             # Rotations
             new_orientation = LQuaternion(self.vis_orientation_anchor)
-
-            print(f"Delta movement: {delta}")
 
             # Yaw/Pitch
             if delta.getX() != 0.0 or delta.getZ() != 0.0:
@@ -196,7 +198,6 @@ class VarianceVis(ShowBase):
             delta_orientation = self.rig.get_right_hand_pose()[1] * self.hand_orientation_anchor.conjugate()
             right_xformed = delta_orientation.getRight()
             roll_angle = np.arctan2(right_xformed.getZ(), right_xformed.getX())  # roll around Y axis
-            # print(f"Roll angle: {np.degrees(roll_angle)}")
 
             if roll_angle != 0.0:
                 roll_rotation = LQuaternion()
@@ -333,8 +334,6 @@ class VarianceVis(ShowBase):
         width = widget.getWidth() * widget.getScale()[0]
         height = widget.getHeight() * widget.getScale()[2]
 
-        # print(f"Widget center: {center}, size: ({width}, {height}), test point: ({gui_x}, {gui_y})")
-
         return (center[0] - width / 2.0 <= gui_x <= center[0] + width / 2.0) and \
                (center[2] - height / 2.0 <= gui_y <= center[2] + height / 2.0)
 
@@ -406,6 +405,7 @@ class VarianceVis(ShowBase):
         ui_card.set_light_off(1)
         return ui_card
 
+    """ Create 3D GUI for slice selection and control """
     def create_3D_gui(self):
         self.slice_selection_widget = self.create_3d_widget("slice_selection_widget")
         self.slice_selection_widget.card.set_pos(3.0, 4.0, 0.0)
@@ -490,6 +490,7 @@ class VarianceVis(ShowBase):
         
         self.all_buttons.append(model_button)
 
+    """ Create 2D GUI for slice selection and control """
     def create_gui(self):    
         # === Slice slider ===
         def update_slice():
@@ -563,8 +564,6 @@ class VarianceVis(ShowBase):
     def on_left_trigger(self, active: bool, changed: bool):
         if changed:
             if active:
-                print(f"Left trigger pressed")
-
                 # Perform raycast
                 ray = CollisionRay()
                 # ray.setOrigin(self.rig.get_left_aim_pose()[0])
@@ -577,8 +576,6 @@ class VarianceVis(ShowBase):
                 pointer_traverser.addCollider(self.pointer_collision_node, self.pointer_collision_handler)
                 pointer_traverser.traverse(self.render)
                 pointer_traverser.showCollisions(render)
-
-                print("Num entries:", self.pointer_collision_handler.getNumEntries())
 
                 if self.pointer_collision_handler.getNumEntries() == 0:
                     return
@@ -596,8 +593,6 @@ class VarianceVis(ShowBase):
                 if found_entry is None:
                     return
 
-                print(f"Hit: {found_entry.getIntoNodePath().getName()}")
-
                 if "slice_selection_widget_card" in found_entry.getIntoNodePath().getName():
                     # Handle UI
                     hit_pos = found_entry.getSurfacePoint(self.slice_selection_widget.card)
@@ -611,14 +606,8 @@ class VarianceVis(ShowBase):
                         gui_x = (u * 2.0) - 1.0
                         gui_y = (v * 2.0) - 1.0
 
-                        print(f"GUI coords: {gui_x}, {gui_y}")
-
                         for button in self.all_buttons:
-                            print(f"Button: {button['text']}, center: {button.getPos()}, size: ({button.getWidth()}, {button.getHeight()}), scale: {button.getScale()}")
-
                             if self.hit_test_framesize(button, gui_x, gui_y):
-                                print(f"Clicked button: {button['text']}")
-
                                 if isinstance(button, DirectCheckButton):
                                     button["indicatorValue"] = not button["indicatorValue"]
                                     button.setIndicatorValue()
@@ -642,10 +631,8 @@ class VarianceVis(ShowBase):
                     # Handle slices
                     pass
 
-
     def on_right_trigger(self, active: bool, changed: bool):
         if changed:
-            print(f"Right trigger active: {active}")
             self.transformation_started = active
             if active:
                 self.hand_transformation_anchor = self.rig.get_right_hand_pose()[0]
@@ -683,7 +670,7 @@ class VarianceVis(ShowBase):
 
     def on_right_analog(self, x, y):
         if abs(x) > 0.1 or abs(y) > 0.1:
-            print(f"Right analog value: {x}, {y}")
+            pass
 
     def create_pointer(self, parent, use_openxr, length=10.0, radius=0.02):
         pointer = parent.attachNewNode("pointer")

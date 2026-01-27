@@ -28,11 +28,6 @@ class DaVis():
         self.left_trigger_prev_state = False
         self.right_trigger_prev_state = False
 
-        # Setup navigation variables
-        # self.transformation_started = False
-        # self.reference_pos = LVecBase3(0, 0, 0)
-        # self.reference_quat = Quat()
-
     def add_input_callback(self, name, callback):
         self.input_callbacks[name] = callback
 
@@ -114,29 +109,6 @@ class DaVis():
             callback(right_trigger_pressed, self.right_trigger_prev_state != right_trigger_pressed)
         self.right_trigger_prev_state = right_trigger_pressed
 
-        # if not self.transformation_started and tbtn_pressed:
-        #     self.transformation_started = True
-
-        # if not tbtn_pressed:
-        #     self.transformation_started = False
-        #     self.reference_pos = LVecBase3(self.flystick9.getPos())
-        #     self.reference_quat = Quat(self.flystick9.getQuat())       
-
-        # if self.transformation_started:
-        #     pass
-        #     dt = globalClock.getDt()
-            
-        #     # translation
-        #     self.rig.setPos(self.rig, (self.flystick9.getPos() - self.reference_pos) * DaVis.TRANSFORMATION_SPEED * dt)
-
-        #     # rotation
-        #     q_old_inv = Quat(self.reference_quat)
-        #     q_old_inv.invertInPlace()
-        #     q_diff = q_old_inv * self.flystick9.getQuat()
-        #     h, _, _ = q_diff.getHpr()
-        #     q_yaw_only = Quat()
-        #     q_yaw_only.setHpr((h * DaVis.TRANSFORMATION_SPEED * dt, 0, 0))
-        #     self.rig.setQuat(self.rig.getQuat() * q_yaw_only)
         return Task.cont
     
     # DTrack exposes a single analog device for all Flystick joysticks, that means:
@@ -206,7 +178,6 @@ class DaVis():
     def update_projection_matrix(self, t):
         
         head_pos = self.head.getPos()
-        print("Head pos:", head_pos)
         
         left_lens = PerspectiveLens()
         left_lens.setNear(DaVis.Z_CALIBRATION_METERS - head_pos.getY())
